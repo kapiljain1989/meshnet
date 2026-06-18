@@ -1,0 +1,144 @@
+###############################################################################
+# MeshNet — Self-Hosted Mesh VPN (Headscale + Caddy + UI)
+# Production-ready Docker Compose
+###############################################################################
+
+services:
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # HEADSCALE — Control plane (Tailscale-compatible coordination server)
+  # ─────────────────────────────────────────────────────────────────────────
+  headscale:
+    image: headscale/headscale:0.23.0
+    container_name: meshnet-headscale
+    restart: unless-stopped
+    command: serve
+    volumes:
+      - ./config/headscale/config.yaml:/etc/headscale/config.yaml:ro
+      - headscale-data:/var/lib/headscale
+      - ./config/headscale/acl.yaml:/etc/headscale/acl.yaml:ro
+    networks:
+      - meshnet-internal
+    ports:
+      # STUN must be exposed directly — UDP cannot be reverse-proxied
+      - "3478:3478/udp"
+    environment:
+      - TZ=UTC
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=64M
+      - /run:size=64M
+    healthcheck:
+      test: ["CMD", "headscale", "nodes", "list"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # CADDY — Reverse proxy with automatic Let's Encrypt TLS
+  # ─────────────────────────────────────────────────────────────────────────
+  caddy:
+    image: caddy:2-alpine
+    container_name: meshnet-caddy
+    restart: unless-stopped
+    volumes:
+      - ./config/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - meshnet-internal
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3 (QUIC)
+    environment:
+      - TZ=UTC
+      - HEADSCALE_DOMAIN=${HEADSCALE_DOMAIN:?Set HEADSCALE_DOMAIN in .env}
+      - UI_DOMAIN=${UI_DOMAIN:?Set UI_DOMAIN in .env}
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      headscale:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:2019/config/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # HEADSCALE-UI — Web administration dashboard
+  # ─────────────────────────────────────────────────────────────────────────
+  headscale-ui:
+    image: ghcr.io/gurucomputing/headscale-ui:latest
+    container_name: meshnet-ui
+    restart: unless-stopped
+    networks:
+      - meshnet-internal
+    environment:
+      - TZ=UTC
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=32M
+    depends_on:
+      headscale:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+# ───────────────────────────────────────────────────────────────────────────
+# NETWORKS — Isolated internal bridge (no external access except via Caddy)
+# ───────────────────────────────────────────────────────────────────────────
+networks:
+  meshnet-internal:
+    driver: bridge
+    internal: false   # Headscale needs outbound for DERP and STUN
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
+    driver_opts:
+      com.docker.network.bridge.name: br-meshnet
+      com.docker.network.bridge.enable_icc: "true"
+      com.docker.network.bridge.enable_ip_masquerade: "true"
+
+# ───────────────────────────────────────────────────────────────────────────
+# VOLUMES — Named volumes for persistence and backup
+# ───────────────────────────────────────────────────────────────────────────
+volumes:
+  headscale-data:
+    driver: local
+    name: meshnet-headscale-data
+  caddy-data:
+    driver: local
+    name: meshnet-caddy-data
+  caddy-config:
+    driver: local
+    name: meshnet-caddy-config

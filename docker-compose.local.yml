@@ -1,0 +1,53 @@
+###############################################################################
+# MeshNet — Local Testing Override
+# Usage: docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
+# Or:    bash scripts/test-local.sh
+###############################################################################
+
+services:
+
+  headscale:
+    volumes:
+      - ./config/headscale/config.yaml.local:/etc/headscale/config.yaml:ro
+      - headscale-data:/var/lib/headscale
+      - ./config/headscale/acl.yaml:/etc/headscale/acl.yaml:ro
+    tmpfs:
+      - /tmp:size=64M
+      - /run:size=64M
+      - /var/run:size=64M
+    ports:
+      - "3478:3478/udp"
+      - "9080:8080"
+    healthcheck:
+      test: ["CMD", "headscale", "nodes", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  caddy:
+    volumes:
+      - ./config/caddy/Caddyfile.local:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+      - "8443:8443"
+    environment:
+      - TZ=UTC
+      - HEADSCALE_DOMAIN=localhost
+      - UI_DOMAIN=localhost
+
+  headscale-ui:
+    image: goodieshq/headscale-admin:latest
+    read_only: false
+    cap_drop: []
+    cap_add:
+      - ALL
+    security_opt:
+      - no-new-privileges:false
+    environment:
+      - TZ=UTC
+      - HS_SERVER=https://vpn.local

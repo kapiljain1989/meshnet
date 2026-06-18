@@ -1,0 +1,24 @@
+{
+  "groups": {
+    "group:admin": [],
+    "group:servers": [],
+    "group:clients": []
+  },
+
+  "acls": [
+    {
+      "action": "accept",
+      "src": ["*"],
+      "dst": ["*:*"]
+    }
+  ],
+
+  "ssh": [
+    {
+      "action": "accept",
+      "src": ["group:admin"],
+      "dst": ["group:servers"],
+      "users": ["root", "autogroup:nonroot"]
+    }
+  ]
+}

@@ -1,0 +1,62 @@
+# MeshNet — Local Caddyfile (self-signed TLS, LAN accessible)
+
+{
+	auto_https disable_redirects
+	default_sni vpn.local
+	servers {
+		protocols h1 h2 h3
+	}
+}
+
+# Headscale control plane
+https://vpn.local {
+	tls internal
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Access-Control-Allow-Origin "*"
+		Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS"
+		Access-Control-Allow-Headers "Content-Type, Authorization"
+		-Server
+	}
+
+	@options method OPTIONS
+	handle @options {
+		respond 204
+	}
+
+	reverse_proxy headscale:8080 {
+		transport http {
+			versions 1.1 2
+		}
+		flush_interval -1
+	}
+}
+
+# Headscale control plane (HTTP — for Tailscale clients that reject self-signed certs)
+http://vpn.local {
+	reverse_proxy headscale:8080 {
+		transport http {
+			versions 1.1 2
+		}
+		flush_interval -1
+	}
+}
+
+# Headscale UI
+https://vpn.local:8443 {
+	tls internal
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	reverse_proxy headscale-ui:80
+}

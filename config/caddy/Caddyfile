@@ -1,0 +1,81 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# MeshNet — Caddy Reverse Proxy
+# Auto-provisions Let's Encrypt TLS certificates for both domains.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Global options
+{
+	email {$ACME_EMAIL:admin@example.com}
+	# Uncomment for testing (avoids Let's Encrypt rate limits):
+	# acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+
+	servers {
+		protocols h1 h2 h3
+	}
+}
+
+# ─── Headscale Control Plane ────────────────────────────────────────────────
+# Tailscale clients connect here. Handles both HTTPS and gRPC.
+{$HEADSCALE_DOMAIN} {
+	# Security headers
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	# Headscale uses gRPC for CLI and API — requires HTTP/2
+	reverse_proxy headscale:8080 {
+		transport http {
+			versions 1.1 2
+		}
+		# Headscale streams (long-poll for node updates)
+		flush_interval -1
+	}
+
+	log {
+		output file /data/logs/headscale-access.log {
+			roll_size 10mb
+			roll_keep 5
+		}
+	}
+}
+
+# ─── Headscale Web UI ───────────────────────────────────────────────────────
+# Admin dashboard. Protected by basic auth — change credentials immediately.
+{$UI_DOMAIN} {
+	# Security headers
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://{$HEADSCALE_DOMAIN}"
+		-Server
+	}
+
+	# Basic auth — generate hash: caddy hash-password
+	# Default: admin / CHANGE_ME_IMMEDIATELY (bcrypt hash below)
+	basicauth {
+		admin $2a$14$YourBcryptHashHere
+	}
+
+	reverse_proxy headscale-ui:8080
+
+	log {
+		output file /data/logs/ui-access.log {
+			roll_size 10mb
+			roll_keep 5
+		}
+	}
+}
+
+# ─── Metrics (internal only — not exposed to internet) ──────────────────────
+# Uncomment if you add a Prometheus scraper inside the Docker network.
+# :9090 {
+# 	reverse_proxy headscale:9090
+# 	@blocked not remote_ip 172.28.0.0/24
+# 	respond @blocked 403
+# }
